@@ -7,14 +7,16 @@
 
 # function to get ETag and Content-Length from header response
 gethostsheaders() {
-    curl -sLIX HEAD "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" -o /tmp/sb-adblock-hosts.head || true
-    if [[ ! -f "/tmp/sb-adblock-hosts.head" ]]; then
-        echo "Error getting header response.  Are we connected to the internet?"
+    export HOSTS_VERSION="$(curl -sL "https://raw.githubusercontent.com/StevenBlack/hosts/master/package.json" | grep '"version":' | cut -f4 -d'"')"
+    if [[ -z "$HOSTS_VERSION" ]]; then
+        echo "Error getting current hosts file version.  Are we connected to the internet?"
         exit 0
     fi
-    export HOSTS_ETAG="$(cat /tmp/sb-adblock-hosts.head | grep -m1 'ETag:' | cut -f2 -d'"')"
-    export HOSTS_LENGTH="$(cat /tmp/sb-adblock-hosts.head | grep -m1 'Content-Length:' | cut -f2 -d' ' | tr -d '\r' | tr -d '$')"
-    rm -f /tmp/sb-adblock-hosts.head
+    export HOSTS_LENGTH="$(curl -sLIX HEAD "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" | grep -m1 'Content-Length:' | cut -f2 -d' ' | tr -d '\r' | tr -d '$')"
+    if [[ -z "$HOSTS_LENGTH" ]]; then
+        echo "Error getting content length of current hosts file.  Are we connected to the internet?"
+        exit 0
+    fi
 }
 # function to download hosts file
 downloadhosts() {
@@ -32,7 +34,8 @@ downloadhosts() {
         cp /etc/hosts /etc/hosts.last.bak
     fi
     mv /tmp/sb-adblock-hosts.tmp /etc/hosts
-    echo "CURRENT_ETAG=\"$HOSTS_ETAG\"" > /etc/sb-adblock-hosts.conf
+    echo "CURRENT_VERSION=\"$HOSTS_VERSION\"" > /etc/sb-adblock-hosts.conf
+    echo "Updated hosts file to version $HOSTS_VERSION"
 }
 # check if running as root
 if [[ "$EUID" != "0" ]]; then
@@ -46,7 +49,7 @@ if [[ ! -f "/etc/sb-adblock-hosts.conf" ]]; then
 else
     source /etc/sb-adblock-hosts.conf
     gethostsheaders
-    if [[ "$CURRENT_ETAG" != "$HOSTS_ETAG" ]]; then
+    if [[ "$CURRENT_VERSION" != "$HOSTS_VERSION" ]]; then
         downloadhosts
     fi
 fi
