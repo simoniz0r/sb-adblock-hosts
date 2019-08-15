@@ -5,14 +5,20 @@
 # Dependencies: curl
 # Description: A script that downloads Steven Black's hosts file (github.com/StevenBlack/hosts) configured for adblock and keeps it up to date
 
-# function to get ETag and Content-Length from header response
-gethostsheaders() {
-    export HOSTS_VERSION="$(curl -sL "https://raw.githubusercontent.com/StevenBlack/hosts/master/package.json" | grep '"version":' | cut -f4 -d'"')"
+# set url to raw github page to SB_RAW_GITHUB variable to save line length
+SB_RAW_GITHUB="https://raw.githubusercontent.com/StevenBlack/hosts/master"
+# function to get version from package.json and Content-Length from header response
+gethostsinfo() {
+    # get hosts file version from package.json using sed to replace everything but version number
+    export HOSTS_VERSION="$(curl -sL "${SB_RAW_GITHUB}/package.json" | sed -En 's%.*"version": "(.*)",%\1%p')"
+    # exit if version not found
     if [[ -z "$HOSTS_VERSION" ]]; then
         echo "Error getting current hosts file version.  Are we connected to the internet?"
         exit 0
     fi
-    export HOSTS_LENGTH="$(curl -sLIX HEAD "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" | grep -m1 'Content-Length:' | cut -f2 -d' ' | tr -d '\r' | tr -d '$')"
+    # get Content-Length from header response using sed to replace everything but the actual length
+    export HOSTS_LENGTH="$(curl -sLIX HEAD "${SB_RAW_GITHUB}/hosts" | sed -En 's%^Content-Length: (.*)\r%\1%p')"
+    # exit if length not found
     if [[ -z "$HOSTS_LENGTH" ]]; then
         echo "Error getting content length of current hosts file.  Are we connected to the internet?"
         exit 0
@@ -20,20 +26,26 @@ gethostsheaders() {
 }
 # function to download hosts file
 downloadhosts() {
-    curl -sL "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" -o /tmp/sb-adblock-hosts.tmp || true
-    HOSTS_DL_LENGTH="$(cat /tmp/sb-adblock-hosts.tmp | wc -c)"
+    curl -sL "${SB_RAW_GITHUB}/hosts" -o /tmp/sb-adblock-hosts.tmp || true
+    # get length of downloaded hosts file using wc -c
+    HOSTS_DL_LENGTH="$(wc -c </tmp/sb-adblock-hosts.tmp)"
+    # make sure length of downloaded hosts file matches length from header response
     if [[ "$HOSTS_LENGTH" != "$HOSTS_DL_LENGTH" ]]; then
-        echo "Error downloading hosts file from 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts'"
+        echo "Error downloading hosts file from '${SB_RAW_GITHUB}/hosts'"
         echo "Content length of original $HOSTS_LENGTH does not match content length of download $HOSTS_DL_LENGTH"
         rm -f /tmp/sb-adblock-hosts.tmp
         exit 1
     fi
+    # create backup of original hosts file if not done already
     if [[ ! -f "/etc/hosts.orig.bak" ]]; then
         cp /etc/hosts /etc/hosts.orig.bak
+    # otherwise backup last downloaded hosts file
     else
         cp /etc/hosts /etc/hosts.last.bak
     fi
+    # move downloaded hosts file to /etc/hosts
     mv /tmp/sb-adblock-hosts.tmp /etc/hosts
+    # store version of downloaded hosts file from package.json so we can check for updates
     echo "CURRENT_VERSION=\"$HOSTS_VERSION\"" > /etc/sb-adblock-hosts.conf
     echo "Updated hosts file to version $HOSTS_VERSION"
 }
@@ -44,11 +56,14 @@ if [[ "$EUID" != "0" ]]; then
 fi
 # check if /etc/sb-adblock-hosts.conf exists
 if [[ ! -f "/etc/sb-adblock-hosts.conf" ]]; then
-    gethostsheaders
+    gethostsinfo
     downloadhosts
 else
+    # source conf file to get current version
     source /etc/sb-adblock-hosts.conf
-    gethostsheaders
+    # get version from package.json and get Content-Length
+    gethostsinfo
+    # if versions do not match, download new hosts file
     if [[ "$CURRENT_VERSION" != "$HOSTS_VERSION" ]]; then
         downloadhosts
     fi
